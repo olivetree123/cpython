@@ -348,6 +348,10 @@ call_soon(asyncio_state *state, PyObject *loop, PyObject *func, PyObject *arg,
     if (ctx == NULL) {
         PyObject *stack[] = {loop, func, arg};
         size_t nargsf = 3 | PY_VECTORCALL_ARGUMENTS_OFFSET;
+        
+        // 使用 vectorcall 协议调用 stack[0] 对象的 call_soon 方法，并传入 stack[1..] 的参数。
+        // event loop 有 call_soon 方法
+        // https://github.com/olivetree123/cpython/blob/b5774603a0c877f19b33fb922e2fb967b1d50329/Lib/asyncio/base_events.py#L819
         handle = PyObject_VectorcallMethod(&_Py_ID(call_soon), stack, nargsf, NULL);
     }
     else {
@@ -362,6 +366,10 @@ call_soon(asyncio_state *state, PyObject *loop, PyObject *func, PyObject *arg,
         }
         stack[nargs] = (PyObject *)ctx;
         size_t nargsf = nargs | PY_VECTORCALL_ARGUMENTS_OFFSET;
+
+        // 使用 vectorcall 协议调用 stack[0] 对象的 call_soon 方法，并传入 stack[1..] 的参数。
+        // event loop 有 call_soon 方法
+        // https://github.com/olivetree123/cpython/blob/b5774603a0c877f19b33fb922e2fb967b1d50329/Lib/asyncio/base_events.py#L819
         handle = PyObject_VectorcallMethod(&_Py_ID(call_soon), stack, nargsf,
                                            state->context_kwname);
     }

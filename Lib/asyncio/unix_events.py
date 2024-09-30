@@ -33,8 +33,8 @@ __all__ = (
 )
 
 
-if sys.platform == 'win32':  # pragma: no cover
-    raise ImportError('Signals are not really supported on Windows')
+# if sys.platform == 'win32':  # pragma: no cover
+#     raise ImportError('Signals are not really supported on Windows')
 
 
 def _sighandler_noop(signum, frame):
@@ -969,5 +969,7 @@ class _UnixDefaultEventLoopPolicy(events.BaseDefaultEventLoopPolicy):
 
 
 SelectorEventLoop = _UnixSelectorEventLoop
+
 DefaultEventLoopPolicy = _UnixDefaultEventLoopPolicy
+
 EventLoop = SelectorEventLoop

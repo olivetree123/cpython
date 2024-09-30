@@ -162,6 +162,7 @@ gen_dealloc(PyGenObject *gen)
     PyObject_GC_Del(gen);
 }
 
+// gaojian: 协程的状态切换
 static PySendResult
 gen_send_ex2(PyGenObject *gen, PyObject *arg, PyObject **presult,
              int exc, int closing)
@@ -230,6 +231,7 @@ gen_send_ex2(PyGenObject *gen, PyObject *arg, PyObject **presult,
 
     gen->gi_frame_state = FRAME_EXECUTING;
     EVAL_CALL_STAT_INC(EVAL_CALL_GENERATOR);
+    // 执行帧代码
     PyObject *result = _PyEval_EvalFrame(tstate, frame, exc);
     assert(tstate->exc_info == prev_exc_info);
     assert(gen->gi_exc_state.previous_item == NULL);

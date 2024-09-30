@@ -53,7 +53,7 @@ def all_tasks(loop=None):
             if futures._get_loop(t) is loop and not t.done()}
 
 
-class Task(futures._PyFuture):  # Inherit Python Task implementation
+class Task(futures.Future):  # Inherit Python Task implementation
                                 # from a Python Future implementation.
 
     """A coroutine wrapped in a Future."""
@@ -79,6 +79,28 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
 
     # If False, don't log a message if the task is destroyed while its
     # status is still pending
+
+    # 任务未完成时保持的重要不变量：
+    # _fut_waiter 为 None 或 Future。
+    # Future 可以是 done() 或 not done()。
+    #
+    # 任务可以处于以下 3 种状态中的任意一种：
+    # - 1：_fut_waiter 不为 None 且不是 _fut_waiter.done()：
+    #       __step()未安排，任务正在等待 _fut_waiter。
+    # - 2：_fut_waiter 为 None 或 _fut_waiter.done()且 __step() 已安排：
+    #       任务正在等待 __step() 执行。
+    # - 3：_fut_waiter 为 None 且 __step() *未* 安排：
+    #       任务当前正在执行(在 __step()) 中。
+    #
+    # * 在状态 1 中，__fut_waiter 的回调之一必须是 __wakeup()。
+    # * 当 _fut_waiter 变为 done() 时，会发生从 1 到 2 的转换，
+    # 因为它安排调用 __wakeup()（这会调用 __step()，因此
+    # 我们知道 __step() 被安排了）。
+    # * 当执行 __step() 时，它会从 2 转换为 3，并且它会将
+    # _fut_waiter 清除为 None。 
+
+    # 如果为 False，则在任务被销毁时不会记录消息，而其
+    # 状态仍处于待处理状态
     _log_destroy_pending = True
 
     def __init__(self, coro, *, loop=None, name=None, context=None,
@@ -286,6 +308,13 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
             if exc is None:
                 # We use the `send` method directly, because coroutines
                 # don't have `__iter__` and `__next__` methods.
+
+                # gaojian:
+                # 这行代码是用来启动一个协程（coroutine）的。具体来说，它向协程发送一个 `None`，并接收协程的第一个 `yield` 表达式的结果。以下是详细解释：
+                # 1. `coro`是一个协程对象，通常是通过调用一个带有 `yield` 关键字的生成器函数得到的；
+                # 2. `send(None)`是启动协程的标准方式，相当于调用 `next(coro)`；
+                # 3. `result`将接收协程的第一个 `yield` 表达式的值；
+                # 简而言之，这行代码的作用是启动协程并获取其第一个 `yield` 表达式的结果。
                 result = coro.send(None)
             else:
                 result = coro.throw(exc)
@@ -491,7 +520,7 @@ async def wait_for(fut, timeout):
     async with timeouts.timeout(timeout):
         return await fut
 
-async def _wait(fs, timeout, return_when, loop):
+async def _wait(fs: list[futures.Future], timeout, return_when, loop):
     """Internal helper for wait().
 
     The fs argument must be a collection of Futures.
@@ -630,6 +659,16 @@ def as_completed(fs, *, timeout=None):
     awaitables are yielded if they are tasks or futures. This makes it easy to
     correlate previously-scheduled tasks with their results:
 
+    按完成顺序创建可等待项或其结果的迭代器。
+
+    同时运行提供的等待项。返回的对象可以是
+    迭代以获得可等待项完成时的结果。
+
+    返回的对象可以作为异步迭代器或普通迭代器进行迭代
+    迭代器。当使用异步迭代时，最初提供的
+    如果可等待项是任务或未来，则它们会被生成。这使得很容易
+    将先前安排的任务与其结果关联起来：
+
         ipv4_connect = create_task(open_connection("127.0.0.1", 80))
         ipv6_connect = create_task(open_connection("::1", 80))
         tasks = [ipv4_connect, ipv6_connect]
@@ -651,6 +690,13 @@ def as_completed(fs, *, timeout=None):
     returns the result or raises the exception of the next completed awaitable.
     This pattern is compatible with Python versions older than 3.13:
 
+    在异步迭代期间，将产生隐式创建的任务
+    提供的可等待项不是任务或未来。
+
+    当用作普通迭代器时，每次迭代都会产生一个新的协程
+    返回结果或引发下一个已完成的等待的异常。
+    此模式与 3.13 之前的 Python 版本兼容：
+
         ipv4_connect = create_task(open_connection("127.0.0.1", 80))
         ipv6_connect = create_task(open_connection("::1", 80))
         tasks = [ipv4_connect, ipv6_connect]
@@ -664,6 +710,9 @@ def as_completed(fs, *, timeout=None):
     A TimeoutError is raised if the timeout occurs before all awaitables are
     done. This is raised by the async for loop during asynchronous iteration or
     by the coroutines yielded during plain iteration.
+
+    如果在所有可等待项完成之前发生超时，则会引发 TimeoutError。
+    这是由异步迭代期间的 async for 循环引发的，或者由普通迭代期间产生的协程执行。
     """
     if inspect.isawaitable(fs):
         raise TypeError(
@@ -705,10 +754,15 @@ async def sleep(delay, result=None):
         h.cancel()
 
 
-def ensure_future(coro_or_future, *, loop=None):
+def ensure_future(coro_or_future, *, loop=None) -> Task:
     """Wrap a coroutine or an awaitable in a future.
+    - If the argument is a Future, it is returned directly.
+    - If the argument is a coroutine, it is wrapped in a Task.
 
-    If the argument is a Future, it is returned directly.
+    @gaojian
+    ensure_future() 函数用来将一个协程或可等待对象包装在一个 future 中。
+    - 如果参数是一个 Future，则直接返回；
+    - 如果参数是一个协程，则将其包装在一个 Task 中；
     """
     if futures.isfuture(coro_or_future):
         if loop is not None and loop is not futures._get_loop(coro_or_future):
@@ -743,6 +797,8 @@ class _GatheringFuture(futures.Future):
     This overrides cancel() to cancel all the children and act more
     like Task.cancel(), which doesn't immediately mark itself as
     cancelled.
+
+    重写了cancel()方法来取消所有任务，因为Taks.cancel()不会立即将自己标记为cancelled。
     """
 
     def __init__(self, children, *, loop):
@@ -762,6 +818,9 @@ class _GatheringFuture(futures.Future):
             # If any child tasks were actually cancelled, we should
             # propagate the cancellation request regardless of
             # *return_exceptions* argument.  See issue 32684.
+
+            # 如果任何子任务被取消，我们应该传播取消请求，
+            # 无论*return_exceptions*参数为何值。
             self._cancel_requested = True
         return ret
 
@@ -795,6 +854,22 @@ def gather(*coros_or_futures, return_exceptions=False):
     exception to the caller, therefore, calling ``gather.cancel()``
     after catching an exception (raised by one of the awaitables) from
     gather won't cancel any other awaitables.
+
+    返回给定 coroutines/futures 的结果。
+
+    协程将被包装在 future 中并在event loop中被调度执行。它们不一定按照传入的顺序被调度执行。
+
+    所有 future对象 必须共享同一个event loop。  如果所有的任务都成功完成，将返回所有future对象的结果列表（按原顺序排列）。
+    如果 *return_exceptions*为 True，任务中的异常被视为与成功相同的结果，并汇总到结果列表中；
+    如果 *return_exceptions*为 False，第一个引发的异常将立即传播到返回的future对象。
+
+    取消：如果外部 Future 被取消，所有子项（尚未完成的）也被取消。  
+    如果有哪个孩子是已取消，这被视为引发了 CancelledError -- 在这种情况下，外部 Future 不会被取消。  （这是为了防止取消一个孩子导致其他孩子被取消。）
+
+    如果 *return_exceptions*为 False，则取消其后的 Gather()已标记为完成不会取消任何提交的等待项。
+    例如，可以在传播后将收集标记为完成
+    调用者的异常，因此，调用“gather.cancel()”
+    捕获异常（由其中一个可等待对象引发）后Gather 不会取消任何其他等待项。
     """
     if not coros_or_futures:
         loop = events.get_event_loop()
@@ -858,10 +933,19 @@ def gather(*coros_or_futures, return_exceptions=False):
                 outer.set_result(results)
 
     arg_to_fut = {}
+
+    # 所有的任务
     children = []
+
+    # 任务数量
     nfuts = 0
+
+    # 已完成任务数量
     nfinished = 0
+
+    # 已完成的任务
     done_futs = []
+
     loop = None
     outer = None  # bpo-46672
     for arg in coros_or_futures:
@@ -874,6 +958,9 @@ def gather(*coros_or_futures, return_exceptions=False):
                 # Future created specifically for 'arg'.  Since the caller
                 # can't control it, disable the "destroy pending task"
                 # warning.
+
+                # “arg” 不是一个 Future对象，“fut” 是一个新的专门为“arg”创建的 Future对象。
+                # 由于调用者无法控制它，因此禁用“销毁待处理任务”警告
                 fut._log_destroy_pending = False
 
             nfuts += 1
@@ -885,6 +972,7 @@ def gather(*coros_or_futures, return_exceptions=False):
 
         else:
             # There's a duplicate Future object in coros_or_futures.
+            # 有重复的参数，直接从字典中获取Future对象
             fut = arg_to_fut[arg]
 
         children.append(fut)
@@ -895,6 +983,11 @@ def gather(*coros_or_futures, return_exceptions=False):
     # optimization: in the special case that *all* futures finished eagerly,
     # this will effectively complete the gather eagerly, with the last
     # callback setting the result (or exception) on outer before returning it
+
+    # 在 GatheringFuture 对象创建后开始运行done callback，以便执行post-processing。
+    # 优化：在*所有*期货急切完成的特殊情况下，
+    # 这将有效地完成收集，最后一个
+    # 回调在返回之前在外部设置结果（或异常）
     for fut in done_futs:
         _done_callback(fut)
     return outer
@@ -932,6 +1025,25 @@ def shield(arg):
     a task disappearing mid-execution. The event loop only keeps
     weak references to tasks. A task that isn't referenced elsewhere
     may get garbage collected at any time, even before it's done.
+
+    @gaojian:
+    shield() 函数用来保护一个future，使其不会被取消。
+    例如：
+        task = asyncio.create_task(something())
+        res = await shield(task)
+    与下面的语句等价：
+        res = await something()
+    但是，如果包含它的协程被取消，那么在 something() 中运行的任务不会被取消。
+    从 something() 的角度来看，取消并没有发生。但是其调用者仍然被取消，因此 yield-from 表达式仍会引发 CancelledError。
+    注意：如果 something() 被其他方式取消，这仍然会取消 shield()。
+    如果要完全忽略取消（不建议），可以将 shield() 与 try/except 子句结合使用，如下所示：
+        task = asyncio.create_task(something())
+        try:
+            res = await shield(task)
+        except CancelledError:
+            res = None
+    保存对传递给此函数的任务的引用，以避免任务在执行过程中消失。
+    事件循环只会对任务保留弱引用。没有其他引用的任务可能会在任何时候被垃圾回收，甚至在完成之前。
     """
     inner = ensure_future(arg)
     if inner.done():
@@ -970,6 +1082,20 @@ def run_coroutine_threadsafe(coro, loop):
     """Submit a coroutine object to a given event loop.
 
     Return a concurrent.futures.Future to access the result.
+
+    The coroutine will be wrapped in a future and scheduled in the event loop.
+
+    The loop argument is the event loop in which the coroutine will be run.
+
+    This function should be used when a coroutine needs to be started in a
+    different thread. 
+
+    @gaojian：这个函数是用来在不同的线程中启动一个协程的。
+    在给定的事件循环中提交一个协程对象。
+    返回一个 concurrent.futures.Future 以访问结果。
+    该协程将被包装在一个 future 中，并在事件循环中调度。
+    loop 参数是协程将在其中运行的事件循环。
+    当需要在不同的线程中启动协程时，应使用此函数。
     """
     if not coroutines.iscoroutine(coro):
         raise TypeError('A coroutine object is required')
@@ -1021,21 +1147,34 @@ eager_task_factory = create_eager_task_factory(Task)
 # Collectively these two sets hold references to the complete set of active
 # tasks. Eagerly executed tasks use a faster regular set as an optimization
 # but may graduate to a WeakSet if the task blocks on IO.
+
+# 这两个集合共同保存对完整活动集合的引用任务。
+# 急切执行的任务使用更快的常规集作为优化，
+# 但如果任务在 IO 上阻塞，则可能会升级为 WeakSet。
 _scheduled_tasks = weakref.WeakSet()
 _eager_tasks = set()
 
 # Dictionary containing tasks that are currently active in
 # all running event loops.  {EventLoop: Task}
 _current_tasks = {}
+"""gaojian: 用来保存每个loop中正在运行的task"""
 
 
 def _register_task(task):
-    """Register an asyncio Task scheduled to run on an event loop."""
+    """
+    Register an asyncio Task scheduled to run on an event loop.
+
+    注册task
+    """
     _scheduled_tasks.add(task)
 
 
 def _register_eager_task(task):
-    """Register an asyncio Task about to be eagerly executed."""
+    """
+    Register an asyncio Task about to be eagerly executed.
+
+    注册急需执行的task
+    """
     _eager_tasks.add(task)
 
 

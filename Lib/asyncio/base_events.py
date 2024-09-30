@@ -56,16 +56,19 @@ __all__ = 'BaseEventLoop','Server',
 
 # Minimum number of _scheduled timer handles before cleanup of
 # cancelled handles is performed.
+# 在执行清理取消的句柄之前，_scheduled计时器句柄的最小数量
 _MIN_SCHEDULED_TIMER_HANDLES = 100
 
 # Minimum fraction of _scheduled timer handles that are cancelled
 # before cleanup of cancelled handles is performed.
+# 在执行清理已取消的句柄之前，被取消的_scheduled计时器句柄的最小比例
 _MIN_CANCELLED_TIMER_HANDLES_FRACTION = 0.5
 
 
 _HAS_IPv6 = hasattr(socket, 'AF_INET6')
 
 # Maximum timeout passed to select to avoid OS limitations
+# 传递给select的最大超时时间，避免操作系统限制
 MAXIMUM_SELECT_TIMEOUT = 24 * 3600
 
 
@@ -416,13 +419,23 @@ class Server(events.AbstractServer):
 
 
 class BaseEventLoop(events.AbstractEventLoop):
+    """
+    这个是基类，没有实现`_process_events`方法，子类有:
+      - selector_events.BaseSelectorEventLoop
+      - unix_events._UnixSelectorEventLoop
+    """
 
     def __init__(self):
         self._timer_cancelled_count = 0
         self._closed = False
         self._stopping = False
+
+        # 等待执行的任务
         self._ready = collections.deque()
+
+        # _scheduled: List[TimerHandle]，保存着需要按时执行的任务
         self._scheduled = []
+
         self._default_executor = None
         self._internal_fds = 0
         # Identifier of the thread running the event loop, or None if the
@@ -463,6 +476,8 @@ class BaseEventLoop(events.AbstractEventLoop):
         """Schedule a coroutine object.
 
         Return a task object.
+
+        将协程对象转成Task对象。
         """
         self._check_closed()
         if self._task_factory is None:
@@ -548,6 +563,7 @@ class BaseEventLoop(events.AbstractEventLoop):
         raise NotImplementedError
 
     def _check_closed(self):
+        """检查Event loop是否已经关闭，若已关闭则抛出异常"""
         if self._closed:
             raise RuntimeError('Event loop is closed')
 
@@ -641,6 +657,10 @@ class BaseEventLoop(events.AbstractEventLoop):
         This method exists so that custom custom event loop subclasses (e.g., event loops
         that integrate a GUI event loop with Python's event loop) have access to all the
         loop setup logic.
+
+        准备运行loop来处理事件。
+
+        此方法的存在使得自定义事件循环子类可以访问所有循环设置逻辑。
         """
         self._check_closed()
         self._check_running()
@@ -692,11 +712,19 @@ class BaseEventLoop(events.AbstractEventLoop):
         different Tasks and that can't be good.
 
         Return the Future's result, or raise its exception.
+
+        运行直到 Future 完成。
+
+        如果参数是协程，则它被包装在任务中。
+
+        警告：使用相同的协程两次调用 run_until_complete() 将是灾难性的————它将把它分成两个不同的任务，这不太好。
+
+        返回 Future 的结果，或引发其异常。
         """
         self._check_closed()
         self._check_running()
 
-        new_task = not futures.isfuture(future)
+        new_task: bool = not futures.isfuture(future)
         future = tasks.ensure_future(future, loop=self)
         if new_task:
             # An exception is raised if the future didn't complete, so there
@@ -771,6 +799,10 @@ class BaseEventLoop(events.AbstractEventLoop):
         This is a float expressed in seconds since an epoch, but the
         epoch, precision, accuracy and drift are unspecified and may
         differ per event loop.
+
+        这是自纪元以来以秒为单位表示的浮点数，但是
+        纪元、精度、准确度和漂移未指定，可能会
+        每个事件循环都不同。
         """
         return time.monotonic()
 
@@ -798,10 +830,13 @@ class BaseEventLoop(events.AbstractEventLoop):
             del timer._source_traceback[-1]
         return timer
 
-    def call_at(self, when, callback, *args, context=None):
+    def call_at(self, when: int, callback, *args, context=None):
         """Like call_later(), but uses an absolute time.
 
         Absolute time corresponds to the event loop's time() method.
+
+        在指定的时间运行callback 方法。
+        - when: 可以理解为时间戳
         """
         if when is None:
             raise TypeError("when cannot be None")
@@ -825,6 +860,12 @@ class BaseEventLoop(events.AbstractEventLoop):
 
         Any positional arguments after the callback will be passed to
         the callback when it is called.
+
+        安排尽快调用回调。
+
+        这作为 FIFO 队列运行：回调函数将按照注册顺序调用，每个回调函数只会被调用一次。
+
+        位置参数`*args`将被传递给回调函数。
         """
         self._check_closed()
         if self._debug:
@@ -846,6 +887,9 @@ class BaseEventLoop(events.AbstractEventLoop):
                 f'got {callback!r}')
 
     def _call_soon(self, callback, args, context):
+        """
+        创建一个Handle对象，并放入待执行队列
+        """
         handle = events.Handle(callback, args, self, context)
         if handle._source_traceback:
             del handle._source_traceback[-1]
@@ -1950,6 +1994,10 @@ class BaseEventLoop(events.AbstractEventLoop):
         This calls all currently ready callbacks, polls for I/O,
         schedules the resulting callbacks, and finally schedules
         'call_later' callbacks.
+
+        运行event loop的一次完整迭代。
+
+        这会调用所有当前准备好的回调(_schedule和_ready队列)，轮询 I/O，安排结果回调，最后安排“call_later”回调。
         """
 
         sched_count = len(self._scheduled)
@@ -2007,6 +2055,9 @@ class BaseEventLoop(events.AbstractEventLoop):
         # callbacks scheduled by callbacks run this time around --
         # they will be run the next time (after another I/O poll).
         # Use an idiom that is thread-safe without using locks.
+        # 这是唯一真正*调用*回调的地方。
+        # 所有其他地方只需将它们添加到准备就绪即可。
+        # 使用不使用锁的线程安全的习惯用法。
         ntodo = len(self._ready)
         for i in range(ntodo):
             handle = self._ready.popleft()

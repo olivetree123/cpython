@@ -1378,6 +1378,9 @@ skip_to_next_entry(unsigned char *p, unsigned char *end) {
 
 #define MAX_LINEAR_SEARCH 40
 
+
+// get_exception_handler 函数在 CPython 的 ceval.c 文件中用于查找异常处理程序。
+// 它的主要功能是遍历当前帧的异常处理表，找到与当前异常匹配的异常处理程序
 static int
 get_exception_handler(PyCodeObject *code, int index, int *level, int *handler, int *lasti)
 {

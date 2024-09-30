@@ -16,6 +16,10 @@ def isfuture(obj):
     This returns True when obj is a Future instance or is advertising
     itself as duck-type compatible by setting _asyncio_future_blocking.
     See comment in Future for more details.
+
+    给Future对象做检查。
+    当 obj 是 Future 实例时返回 True
+    有关更多详细信息，请参阅未来的评论。
     """
     return (hasattr(obj.__class__, '_asyncio_future_blocking') and
             obj._asyncio_future_blocking is not None)

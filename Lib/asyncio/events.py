@@ -26,7 +26,16 @@ from . import format_helpers
 
 
 class Handle:
-    """Object returned by callback registration methods."""
+    """
+    Object returned by callback registration methods.
+    
+    Handle 是一个代表即将在事件循环中执行的回调的对象。实质上，一个 Handle 对象包含执行一个回调所需要的所有信息，包括：
+    - 待执行的回调函数（callback）
+    - 在回调函数运行时将要传入的参数（args）
+    - 使用调试模式时的一些额外信息，比如回调被创建和计划执行的时候所在的上下文
+
+    一个 Handle 实例通常是由事件循环的调度方法如 call_soon、call_later、call_at 等创建的，并被事件循环内部存储，等待执行。
+    """
 
     __slots__ = ('_callback', '_args', '_cancelled', '_loop',
                  '_source_traceback', '_repr', '__weakref__',
@@ -629,7 +638,12 @@ class AbstractEventLoop:
 
 
 class AbstractEventLoopPolicy:
-    """Abstract policy for accessing the event loop."""
+    """
+    Abstract policy for accessing the event loop.
+
+    policy类定义了访问event loop的方法。
+    也就是说，你不能直接访问 event loop对象，而是要通过policy对象的方法来访问event loop。
+    """
 
     def get_event_loop(self):
         """Get the event loop for the current context.
@@ -677,6 +691,25 @@ class BaseDefaultEventLoopPolicy(AbstractEventLoopPolicy):
         """Get the event loop for the current context.
 
         Returns an instance of EventLoop or raises an exception.
+
+        返回一个EventLoop对象，或者抛出异常
+
+        主线程和子线程的不同：
+        - 对于主线程，没有event loop对象时会自动创建；
+        - 对于子线程，没有event loop对象会报错，因此在子线程，开发者需要自己创建好event loop对象；
+
+        子线程代码示例：
+            ```
+            def start_loop():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                loop.run_forever()
+
+            # 在子线程中启动一个新的事件循环
+            t = threading.Thread(target=start_loop)
+            t.start()
+            ```
         """
         if (self._local._loop is None and
                 not self._local._set_called and
@@ -716,8 +749,9 @@ class BaseDefaultEventLoopPolicy(AbstractEventLoopPolicy):
     def new_event_loop(self):
         """Create a new event loop.
 
-        You must call set_event_loop() to make this the current event
-        loop.
+        You must call set_event_loop() to make this the current event loop.
+
+        创建一个新的event loop。你必须调用`set_event_loop()`使得它成为当前的event loop
         """
         return self._loop_factory()
 
@@ -769,6 +803,11 @@ def _set_running_loop(loop):
 
     This is a low-level function intended to be used by event loops.
     This function is thread-specific.
+
+    设置正在运行的事件循环。
+
+    这是一个由事件循环使用的低级函数。
+    该函数是特定于线程的。
     """
     # NOTE: this function is implemented in C (see _asynciomodule.c)
     _running_loop.loop_pid = (loop, os.getpid())
@@ -807,6 +846,12 @@ def get_event_loop():
 
     If there is no running event loop set, the function will return
     the result of `get_event_loop_policy().get_event_loop()` call.
+
+    返回asyncio event loop
+
+    当从协程或回调调用时，该函数将始终返回正在运行的event loop。
+
+    如果没有设置正在运行的事件循环，该函数将返回`get_event_loop_policy().get_event_loop()` 调用的结果。
     """
     # NOTE: this function is implemented in C (see _asynciomodule.c)
     current_loop = _get_running_loop()
