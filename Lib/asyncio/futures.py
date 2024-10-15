@@ -20,8 +20,13 @@ isfuture = base_futures.isfuture
 
 
 _PENDING = base_futures._PENDING
+"""@gaojian: 表示Future对象还没有完成，任务还在进行中"""
+
 _CANCELLED = base_futures._CANCELLED
+"""@gaojian: 表示Future对象已经被取消"""
+
 _FINISHED = base_futures._FINISHED
+"""@gaojian: 表示Future对象已经完成"""
 
 
 STACK_DEBUG = logging.DEBUG - 1  # heavy-duty debugging
@@ -43,6 +48,38 @@ class Future:
     - This class is not compatible with the wait() and as_completed()
       methods in the concurrent.futures package.
 
+    @gaojian:
+
+    `asyncio` 模块中的 [`Future`]类与 `concurrent.futures.Future` 类有不同的用途和实现方式。
+    以下是一些原因，解释为什么 `asyncio` 需要自己实现一个 [`Future`]类，而不是直接使用 `concurrent.futures.Future`：
+
+    1. **线程安全性**：
+    - `asyncio.Future` 不是线程安全的，设计上假设所有操作都在同一个事件循环线程中执行。
+    - `concurrent.futures.Future` 是线程安全的，设计上支持多线程环境。
+    
+    2. **异步编程模型**：
+    - `asyncio.Future` 是为异步编程设计的，专门用于与 `asyncio` 事件循环一起工作。
+    - `concurrent.futures.Future` 主要用于线程池和进程池中的并发任务。
+
+    3. **事件循环集成**：
+    - `asyncio.Future` 与 `asyncio` 事件循环紧密集成，支持 `await` 关键字，可以在协程中使用。
+    - `concurrent.futures.Future` 不能直接与 `asyncio` 事件循环一起使用。
+
+    4. **`result()` 和 `exception()` 方法**：
+    - `asyncio.Future` 的 `result()` 和 `exception()` 方法不接受超时参数，并且在 Future 未完成时会抛出异常。
+    - `concurrent.futures.Future` 的 `result()` 和 `exception()` 方法可以接受超时参数，允许在指定时间内等待结果。
+
+    5. **回调机制**：
+    - `asyncio.Future` 中通过 `add_done_callback()` 注册的回调总是通过事件循环的 `call_soon()` 方法调用。这意味着回调会在事件循环的下一次迭代中执行。
+    - `concurrent.futures.Future` 中的回调机制没有这种限制，回调可能会在不同的线程中执行。
+
+    6. **性能和优化**：
+    - `asyncio.Future` 针对异步任务进行了优化，减少了上下文切换的开销。
+    - `concurrent.futures.Future` 主要针对并发任务进行了优化，适用于多线程和多进程环境。
+
+    综上所述，`asyncio` 需要自己实现一个 [`Future`]类，
+    以便更好地支持异步编程模型、事件循环集成、取消和超时处理、回调机制以及性能优化。
+    直接使用 `concurrent.futures.Future` 无法满足这些需求。
     """
 
     # Class variables serving as defaults for instance variables.
@@ -221,10 +258,16 @@ class Future:
         The callback is called with a single argument - the future object. If
         the future is already done when this is called, the callback is
         scheduled with call_soon.
+
+        @gaojian:
+        添加一个回调函数，当 future 对象变为完成状态时运行。
+        回调函数被调用时只有一个参数 - future 对象。如果 future 在调用此方法时已经完成，则回调函数会被call_soon调度。
         """
         if self._state != _PENDING:
+            # @gaojian: future 对象已经完成，直接调用回调函数
             self._loop.call_soon(fn, self, context=context)
         else:
+            # gaojian: future 对象还没有完成，将回调函数添加到回调列表中
             if context is None:
                 context = contextvars.copy_context()
             self._callbacks.append((fn, context))
@@ -283,6 +326,7 @@ class Future:
 
     def __await__(self):
         if not self.done():
+            # gaojian: 标记当前 Future 对象正在被 await 关键字等待
             self._asyncio_future_blocking = True
             yield self  # This tells Task to wait for completion.
         if not self.done():
