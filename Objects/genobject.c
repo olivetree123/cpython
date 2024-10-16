@@ -136,6 +136,41 @@ gen_dealloc(PyGenObject *gen)
     PyObject_GC_Del(gen);
 }
 
+
+// @gaojian: 生成器send方法的实现
+// 
+// gen_send_ex2 参数说明：
+// - gen：指向生成器对象的指针；
+// - arg：要发送到生成器的值；
+// - presult：指向结果对象的指针；
+// - exc：是否有异常；
+// - closing：生成器是否关闭；
+//
+// gen_send_ex2 主要逻辑：
+// 1. 检查生成器的状态，确保生成器未开始执行或未完成；
+// 2. 将 arg 推送到生成器的栈中(生成器的send方法)；
+// 3. 调用 _PyEval_EvalFrame 执行生成器的帧；
+// 4. 处理生成器的返回值和异常；
+// 5. 如果生成器已结束，清理生成器的帧和状态；
+//
+// 关于send方法的示例：
+// def my_generator():
+//     value = "初始值"
+//     name = "没有名称"
+//     while True:
+//         name = yield f"收到: {value}:{name}"
+//         // name 需要通过send方法发送到生成器
+//         print("get name:", name)
+//
+// gen = my_generator()
+//
+// # 启动生成器
+// print(next(gen))  # 输出: 初始值：没有名称
+//
+// # 发送值到生成器
+// print(gen.send("第一个名称"))  # 输出: 初始值: 第一个值
+// print(gen.send("第二个名称"))  # 输出: 初始值: 第二个值
+//
 static PySendResult
 gen_send_ex2(PyGenObject *gen, PyObject *arg, PyObject **presult,
              int exc, int closing)
@@ -296,6 +331,8 @@ PyDoc_STRVAR(send_doc,
 "send(arg) -> send 'arg' into generator,\n\
 return next yielded value or raise StopIteration.");
 
+// @gaojian:
+// gen_send 函数的作用是将一个值发送到生成器中，并推进生成器的执行，直到下一个 yield 表达式或生成器结束。
 static PyObject *
 gen_send(PyGenObject *gen, PyObject *arg)
 {
@@ -572,6 +609,7 @@ gen_throw(PyGenObject *gen, PyObject *args)
 }
 
 
+// @gaojian: 生成器的next()方法实现，跟send(None)是一样的。
 static PyObject *
 gen_iternext(PyGenObject *gen)
 {

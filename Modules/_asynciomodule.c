@@ -371,6 +371,10 @@ call_soon(PyObject *loop, PyObject *func, PyObject *arg, PyObject *ctx)
         }
         stack[nargs] = (PyObject *)ctx;
 
+        // @gaojian:
+        // 使用 vectorcall 协议调用 stack[0] 对象的 call_soon 方法，并传入 stack[1..] 的参数。
+        // event loop 有 call_soon 方法
+        // https://github.com/olivetree123/cpython/blob/b5774603a0c877f19b33fb922e2fb967b1d50329/Lib/asyncio/base_events.py#L819
         handle = PyObject_Vectorcall(callable, stack, nargs, context_kwname);
         Py_DECREF(callable);
     }

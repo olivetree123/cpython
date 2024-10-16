@@ -54,16 +54,19 @@ __all__ = 'BaseEventLoop','Server',
 
 # Minimum number of _scheduled timer handles before cleanup of
 # cancelled handles is performed.
+# @gaojian: 在执行清理取消的句柄之前，_scheduled计时器句柄的最小数量
 _MIN_SCHEDULED_TIMER_HANDLES = 100
 
 # Minimum fraction of _scheduled timer handles that are cancelled
 # before cleanup of cancelled handles is performed.
+# @gaojian: 在执行清理已取消的句柄之前，被取消的_scheduled计时器句柄的最小比例
 _MIN_CANCELLED_TIMER_HANDLES_FRACTION = 0.5
 
 
 _HAS_IPv6 = hasattr(socket, 'AF_INET6')
 
 # Maximum timeout passed to select to avoid OS limitations
+# @gaojian: 传递给select的最大超时时间，避免操作系统限制
 MAXIMUM_SELECT_TIMEOUT = 24 * 3600
 
 # Used for deprecation and removal of `loop.create_datagram_endpoint()`'s
@@ -387,12 +390,22 @@ class Server(events.AbstractServer):
 
 
 class BaseEventLoop(events.AbstractEventLoop):
+    """
+    @gaojian:
+    这个是基类，没有实现`_process_events`方法，子类有:
+      - selector_events.BaseSelectorEventLoop
+      - unix_events._UnixSelectorEventLoop
+    """
 
     def __init__(self):
         self._timer_cancelled_count = 0
         self._closed = False
         self._stopping = False
+
+        # 等待执行的任务
         self._ready = collections.deque()
+
+        # _scheduled: List[TimerHandle]，保存着需要按时执行的任务
         self._scheduled = []
         self._default_executor = None
         self._internal_fds = 0
@@ -432,6 +445,8 @@ class BaseEventLoop(events.AbstractEventLoop):
         """Schedule a coroutine object.
 
         Return a task object.
+
+        @gaojian: 将协程对象转成Task对象。
         """
         self._check_closed()
         if self._task_factory is None:
@@ -511,6 +526,8 @@ class BaseEventLoop(events.AbstractEventLoop):
         raise NotImplementedError
 
     def _check_closed(self):
+        """@gaojian: 
+        检查Event loop是否已经关闭，若已关闭则抛出异常"""
         if self._closed:
             raise RuntimeError('Event loop is closed')
 
@@ -624,7 +641,7 @@ class BaseEventLoop(events.AbstractEventLoop):
         self._check_closed()
         self._check_running()
 
-        new_task = not futures.isfuture(future)
+        new_task: bool = not futures.isfuture(future)
         future = tasks.ensure_future(future, loop=self)
         if new_task:
             # An exception is raised if the future didn't complete, so there
@@ -724,10 +741,14 @@ class BaseEventLoop(events.AbstractEventLoop):
             del timer._source_traceback[-1]
         return timer
 
-    def call_at(self, when, callback, *args, context=None):
+    def call_at(self, when: int, callback, *args, context=None):
         """Like call_later(), but uses an absolute time.
 
         Absolute time corresponds to the event loop's time() method.
+
+        @gaojian:
+        在指定的时间运行callback 方法。
+        - when: 可以理解为时间戳
         """
         self._check_closed()
         if self._debug:
@@ -749,6 +770,11 @@ class BaseEventLoop(events.AbstractEventLoop):
 
         Any positional arguments after the callback will be passed to
         the callback when it is called.
+
+        @gaojian:
+        安排尽快调用回调。
+        这作为 FIFO 队列运行：回调函数将按照注册顺序调用，每个回调函数只会被调用一次。
+        位置参数`*args`将被传递给回调函数。
         """
         self._check_closed()
         if self._debug:
@@ -770,6 +796,9 @@ class BaseEventLoop(events.AbstractEventLoop):
                 f'got {callback!r}')
 
     def _call_soon(self, callback, args, context):
+        """@gaojian:
+        创建一个Handle对象，并放入待执行队列
+        """
         handle = events.Handle(callback, args, self, context)
         if handle._source_traceback:
             del handle._source_traceback[-1]
@@ -1835,6 +1864,10 @@ class BaseEventLoop(events.AbstractEventLoop):
         This calls all currently ready callbacks, polls for I/O,
         schedules the resulting callbacks, and finally schedules
         'call_later' callbacks.
+
+        @gaojian:
+        运行event loop的一次完整迭代。
+        这会调用所有当前准备好的回调(_schedule和_ready队列)，轮询 I/O，安排结果回调，最后安排“call_later”回调。
         """
 
         sched_count = len(self._scheduled)
@@ -1889,6 +1922,11 @@ class BaseEventLoop(events.AbstractEventLoop):
         # callbacks scheduled by callbacks run this time around --
         # they will be run the next time (after another I/O poll).
         # Use an idiom that is thread-safe without using locks.
+        
+        # @gaojian:
+        # 这是唯一真正调用回调的地方。
+        # 所有其他地方只需将它们添加到准备就绪即可。
+        # 使用不使用锁的线程安全的习惯用法。
         ntodo = len(self._ready)
         for i in range(ntodo):
             handle = self._ready.popleft()

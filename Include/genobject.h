@@ -12,7 +12,15 @@ extern "C" {
 #include "abstract.h" /* PySendResult */
 
 /* _PyGenObject_HEAD defines the initial segment of generator
-   and coroutine objects. */
+   and coroutine objects. 
+
+    @gaojian:
+    - PyFrameObject 是一个表示执行帧的结构体，生成器的执行状态保存在这里面；
+      它包含了生成器的当前执行状态、当前指令、当前局部变量、当前全局变量、当前代码对象等信息；
+    - 每次调用 next() 或 send() 方法时，生成器的执行帧 gi_frame 会被用来恢复生成器的执行状态；
+    - PyFrameObject 中的 f_stacktop 属性记录了生成器的当前执行位置；
+    - 当生成器执行完毕时，gi_frame 会被设置为 NULL，表示生成器已结束；
+*/
 #define _PyGenObject_HEAD(prefix)                                           \
     PyObject_HEAD                                                           \
     /* Note: gi_frame can be NULL if the generator is "finished" */         \
