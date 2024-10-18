@@ -1909,7 +1909,7 @@ class BaseEventLoop(events.AbstractEventLoop):
         # Handle 'later' callbacks that are ready.
         end_time = self.time() + self._clock_resolution
         while self._scheduled:
-            handle = self._scheduled[0]
+            handle: events.Handle = self._scheduled[0]
             if handle._when >= end_time:
                 break
             handle = heapq.heappop(self._scheduled)
@@ -1929,7 +1929,7 @@ class BaseEventLoop(events.AbstractEventLoop):
         # 使用不使用锁的线程安全的习惯用法。
         ntodo = len(self._ready)
         for i in range(ntodo):
-            handle = self._ready.popleft()
+            handle: events.Handle = self._ready.popleft()
             if handle._cancelled:
                 continue
             if self._debug:

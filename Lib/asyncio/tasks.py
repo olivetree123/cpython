@@ -18,6 +18,7 @@ import types
 import warnings
 import weakref
 from types import GenericAlias
+from typing import Union, Optional, Coroutine, Generator
 
 from . import base_tasks
 from . import coroutines
@@ -110,7 +111,7 @@ class Task(futures.Future):  # Inherit Python Task implementation
 
     _log_destroy_pending = True
 
-    def __init__(self, coro, *, loop=None, name=None):
+    def __init__(self, coro: Union[Coroutine, Generator], *, loop=None, name=None):
         super().__init__(loop=loop)
         if self._source_traceback:
             del self._source_traceback[-1]
@@ -126,10 +127,14 @@ class Task(futures.Future):  # Inherit Python Task implementation
             self._name = str(name)
 
         self._must_cancel = False
+        """这是一个内部属性，用于指示任务或操作是否需要被取消。通过设置这个属性，可以在异步任务中实现任务取消的逻辑。"""
+
         self._fut_waiter = None
-        self._coro = coro
+        self._coro: Union[Coroutine, Generator] = coro
         self._context = contextvars.copy_context()
 
+        # @gaojian: 
+        # 通过loop.call_sonn，在Task初始化后马上就通知事件循环在下次有空的时候执行自己的__step函数
         self._loop.call_soon(self.__step, context=self._context)
         _register_task(self)
 
@@ -251,12 +256,12 @@ class Task(futures.Future):  # Inherit Python Task implementation
                 # don't have `__iter__` and `__next__` methods.
 
                 # @gaojian:
-                # 这行代码是用来启动一个协程（coroutine）的。具体来说，它向协程发送一个 `None`，并接收协程的第一个 `yield` 表达式的结果。以下是详细解释：
+                # 这行代码是用来启动一个协程（coroutine）的。具体来说，它调用协程的send(None)方法，并接收协程的第一个 `yield` 表达式的结果。以下是详细解释：
                 # 1. `coro`是一个协程对象，通常是通过调用一个带有 `yield` 关键字的生成器函数得到的；
                 # 2. `send(None)`是启动协程的标准方式，相当于调用 `next(coro)`；
                 # 3. `result`将接收协程的第一个 `yield` 表达式的值；
                 # 简而言之，这行代码的作用是启动协程并获取其第一个 `yield` 表达式的结果。
-                result = coro.send(None)
+                result: Union[Task, futures.Future] = coro.send(None)
             else:
                 result = coro.throw(exc)
         except StopIteration as exc:
@@ -276,30 +281,27 @@ class Task(futures.Future):  # Inherit Python Task implementation
         except BaseException as exc:
             super().set_exception(exc)
         else:
-            blocking = getattr(result, '_asyncio_future_blocking', None)
+            # 没有异常
+            # 检查当前任务的结果result有没有 _asyncio_future_blocking 属性：
+            # - 如果有，说明这个result是一个Future或Task对象，也就是说当前任务里面还有一个子任务(一个Future或Task对象)需要等待
+            #
+            # result 只能是Future对象或者None
+            blocking: Optional[bool] = getattr(result, '_asyncio_future_blocking', None)
             if blocking is not None:
                 # Yielded Future must come from Future.__iter__().
                 if futures._get_loop(result) is not self._loop:
-                    new_exc = RuntimeError(
-                        f'Task {self!r} got Future '
-                        f'{result!r} attached to a different loop')
-                    self._loop.call_soon(
-                        self.__step, new_exc, context=self._context)
+                    new_exc = RuntimeError(f'Task {self!r} got Future {result!r} attached to a different loop')
+                    self._loop.call_soon(self.__step, new_exc, context=self._context)
                 elif blocking:
-                    if result is self:
-                        new_exc = RuntimeError(
-                            f'Task cannot await on itself: {self!r}')
-                        self._loop.call_soon(
-                            self.__step, new_exc, context=self._context)
-                    else:
-                        result._asyncio_future_blocking = False
-                        result.add_done_callback(
-                            self.__wakeup, context=self._context)
-                        self._fut_waiter = result
-                        if self._must_cancel:
-                            if self._fut_waiter.cancel(
-                                    msg=self._cancel_message):
-                                self._must_cancel = False
+                    # blocking = True 表示这个子任务处于正在执行的状态
+                    # 此时的Task放弃了自己对事件循环的控制权，等待这个正在执行的子任务执行完成后唤醒自己
+                    # 子任务执行完成后会调用 父任务的__wakeup() 方法唤醒父任务
+                    result._asyncio_future_blocking = False
+                    result.add_done_callback(self.__wakeup, context=self._context)
+                    self._fut_waiter = result
+                    # if self._must_cancel:
+                    #     if self._fut_waiter.cancel(msg=self._cancel_message):
+                    #         self._must_cancel = False
                 else:
                     new_exc = RuntimeError(
                         f'yield was used instead of yield from '
@@ -309,6 +311,7 @@ class Task(futures.Future):  # Inherit Python Task implementation
 
             elif result is None:
                 # Bare yield relinquishes control for one event loop iteration.
+                # 一个空的 yield 表达式会让出控制权，等待下一个事件循环迭代
                 self._loop.call_soon(self.__step, context=self._context)
             elif inspect.isgenerator(result):
                 # Yielding a generator is just wrong.
@@ -326,7 +329,7 @@ class Task(futures.Future):  # Inherit Python Task implementation
             _leave_task(self._loop, self)
             self = None  # Needed to break cycles when an exception occurs.
 
-    def __wakeup(self, future):
+    def __wakeup(self, future: Union["Task", futures.Future]):
         try:
             future.result()
         except BaseException as exc:
@@ -339,6 +342,13 @@ class Task(futures.Future):  # Inherit Python Task implementation
             # Python eval loop would use `.send(value)` method call,
             # instead of `__next__()`, which is slower for futures
             # that return non-generator iterators from their `__iter__`.
+
+            # @gaojian:
+            # 不要显式传递 `future.result()` 的值，
+            # 因为 `Future.__iter__` 和 `Future.__await__` 不需要它。
+            # 如果我们调用 `_step(value, None)` 而不是 `_step()`，
+            # Python eval 循环将使用 `.send(value)` 方法调用，
+            # 而不是 `__next__()`，对于 future 来说从它们的`__iter__`返回非生成器迭代器速度较慢。
             self.__step()
         self = None  # Needed to break cycles when an exception occurs.
 
@@ -968,7 +978,7 @@ def run_coroutine_threadsafe(coro, loop):
 
     该协程将被包装在一个 future 中，并在事件循环中调度。
     loop 参数是协程将在其中运行的事件循环。
-    
+
     当需要在不同的线程中启动协程时，应使用此函数。
     """
     if not coroutines.iscoroutine(coro):
@@ -990,15 +1000,19 @@ def run_coroutine_threadsafe(coro, loop):
 
 
 # WeakSet containing all alive tasks.
+# @gaojian: 保存所有活着的任务
 _all_tasks = weakref.WeakSet()
 
 # Dictionary containing tasks that are currently active in
 # all running event loops.  {EventLoop: Task}
+# @gaojian: 保存每个loop当前执行的任务
 _current_tasks = {}
 
 
 def _register_task(task):
-    """Register a new task in asyncio as executed by loop."""
+    """Register a new task in asyncio as executed by loop.  
+    注册task
+    """
     _all_tasks.add(task)
 
 

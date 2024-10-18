@@ -103,6 +103,8 @@ class Future:
     #   `await Future()` or`yield from Future()` (correct) vs.
     #   `yield Future()` (incorrect).
     _asyncio_future_blocking = False
+    """这是一个内部属性，用于标识 Future 对象是否正在被 await 语句等待。  
+    这个属性主要用于优化和调试目的，帮助 asyncio 库更好地管理异步任务的执行。"""
 
     __log_traceback = False
 
@@ -136,7 +138,7 @@ class Future:
         exc = self._exception
         context = {
             'message':
-                f'{self.__class__.__name__} exception was never retrieved',
+            f'{self.__class__.__name__} exception was never retrieved',
             'exception': exc,
             'future': self,
         }
@@ -273,7 +275,7 @@ class Future:
             # @gaojian: future 对象已经完成，直接调用回调函数
             self._loop.call_soon(fn, self, context=context)
         else:
-            # gaojian: future 对象还没有完成，将回调函数添加到回调列表中
+            # @gaojian: future 对象还没有完成，将回调函数添加到回调列表中
             if context is None:
                 context = contextvars.copy_context()
             self._callbacks.append((fn, context))
@@ -285,8 +287,7 @@ class Future:
 
         Returns the number of callbacks removed.
         """
-        filtered_callbacks = [(f, ctx)
-                              for (f, ctx) in self._callbacks
+        filtered_callbacks = [(f, ctx) for (f, ctx) in self._callbacks
                               if f != fn]
         removed_count = len(self._callbacks) - len(filtered_callbacks)
         if removed_count:
@@ -342,17 +343,19 @@ class Future:
                   由于生成器对象实现了迭代器协议，包括 __iter__() 和 __next__() 方法，因此生成器也是迭代器。
         - 迭代器：迭代器是实现了迭代器协议的对象，必须实现 __iter__() 和 __next__() 方法。
         这里可以写多个yield，每个yield都会暂停当前协程的执行，并将控制权返回给事件循环，当Future对象完成时，事件循环会将协程唤醒，返回结果。
+
+        await 关键字会调用该方法，直到该方法执行完毕。
         """
         if not self.done():
             # gaojian: 标记当前 Future 对象正在被 await 关键字等待
             self._asyncio_future_blocking = True
 
-            # @gaojian: 
+            # @gaojian:
             # yield 语句使得该方法成为一个生成器函数，调用它会返回一个生成器对象(这里将Future对象(self)改造成生成器对象返回；)；
             # yield 关键字会暂停当前协程的执行，并将控制权返回给事件循环；
             # 当生成器对象(这里是self)完成时，协程会被唤醒，返回结果；
             yield self  # This tells Task to wait for completion.
-        
+
         # gaojian: Future 对象完成以后协程会被唤醒，返回结果
         if not self.done():
             raise RuntimeError("await wasn't used with future")
