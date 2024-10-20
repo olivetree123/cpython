@@ -1665,6 +1665,7 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, PyFrameObject *f, int throwflag)
         dtrace_function_entry(f);
 
     names = co->co_names;
+    // @gaojian: co_consts 常量池, 一个元组，保存代码块中的所有常量
     consts = co->co_consts;
     fastlocals = f->f_localsplus;
     freevars = f->f_localsplus + co->co_nlocals;
@@ -1856,6 +1857,7 @@ main_loop:
         }
 
         case TARGET(LOAD_FAST): {
+            // @gaojian: GETLOCAL 获取局部变量
             PyObject *value = GETLOCAL(oparg);
             if (value == NULL) {
                 format_exc_check_arg(tstate, PyExc_UnboundLocalError,
@@ -1863,12 +1865,21 @@ main_loop:
                                      PyTuple_GetItem(co->co_varnames, oparg));
                 goto error;
             }
+            // @gaojian: Py_INCREF 增加引用计数
             Py_INCREF(value);
+            // @gaojian: PUSH the value to the stack
+            // PUSH 将value压入栈顶
             PUSH(value);
+            // @gaojian: DISPATCH to the next instruction
+            // DISPATCH 跳转到下一条指令, 即执行下一条指令，相当于 continue
             DISPATCH();
         }
 
         case TARGET(LOAD_CONST): {
+            // @gaojian: 
+            // PREDICTED(LOAD_CONST) 的作用是检查即将执行的指令是否是 LOAD_CONST
+            // 如果是，则跳转到相应的处理代码，以便提前进行优化处理。
+            // 这种优化称为 opcode prediction，可以提高python解释器的执行效率
             PREDICTED(LOAD_CONST);
             PyObject *value = GETITEM(consts, oparg);
             Py_INCREF(value);

@@ -47,6 +47,28 @@
      run and end up being the first to re-acquire it, making the "timeslices"
      much longer than expected.
      (Note: this mechanism is enabled with FORCE_SWITCHING above)
+
+    @gaojian: 
+    - GIL 是一个布尔变量（已锁定），其访问受互斥锁（gil_mutex）保护，其更改由条件变量（gil_cond）发出信号。
+      gil_mutex 占用的时间很短，因此几乎没有争用。
+
+    - 在 GIL 持有线程中，主循环（PyEval_EvalFrameEx）必须能够根据另一个线程的要求释放 GIL。
+      为此目的使用易失性布尔变量（gil_drop_request），在 eval 循环的每个转折点都会检查该变量。
+      在 `gil_cond` 上等待 `interval` 微秒超时后设置该变量。
+
+      [实际上，使用另一个易失性布尔变量（eval_breaker）将多个条件合并为一个。
+      由于 Python 仅在缓存一致性架构上运行，因此易失性布尔值足以作为线程间信号传递手段。]
+
+    - 想要获取 GIL 的线程将首先让给定的时间量（`interval` 微秒）通过，然后再设置 gil_drop_request。
+      这鼓励定义切换周期，但并不强制执行，因为操作码可能需要任意时间来执行。
+
+      用户可以使用 Python API `sys.{get,set}switchinterval()` 读取和修改 `interval` 值。
+
+    - 当线程释放 GIL 并设置 gil_drop_request 时，该线程确保另一个等待 GIL 的线程得到调度。
+      它通过等待条件变量（switch_cond）来实现这一点，直到 last_holder 的值更改为其自己的线程状态指针以外的其他值，这表明另一个线程能够获取 GIL。
+
+      这是为了禁止多核机器上的延迟不利行为，其中一个线程会推测性地释放 GIL，但仍然运行并最终成为第一个重新获取它的线程，从而使“时间片”比预期的长得多。
+      （注意：此机制通过上面的 FORCE_SWITCHING 启用）
 */
 
 #include "condvar.h"
